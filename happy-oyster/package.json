@@ -1,0 +1,23 @@
+{
+  "name": "reactor-happy-oyster-sandbox",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --names backend,frontend \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
+    "build": "npm run build --workspace frontend",
+    "test": "npm run test --workspace backend",
+    "check": "npm run check --workspace backend && npm run test --workspace backend && npm run build --workspace frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "overrides": {
+    "awaitqueue": "3.3.0",
+    "axios": "1.18.1",
+    "uuid": "11.1.1"
+  }
+}

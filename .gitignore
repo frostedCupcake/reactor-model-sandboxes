@@ -1,6 +1,5 @@
 node_modules/
-.next/
 dist/
 *.log
-backend/.env
-frontend/.env.local
+**/.env
+**/.env.local
