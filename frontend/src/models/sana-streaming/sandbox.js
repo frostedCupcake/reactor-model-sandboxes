@@ -4,6 +4,7 @@ import { attachMainVideo, sandboxControls } from "../shared.js";
 export const model = {
   slug: "sana-streaming",
   name: "SANA-Streaming",
+  docs: "https://docs.reactor.inc/model-api-reference/sana-streaming/overview",
   requiresVideo: true,
 };
 
@@ -17,5 +18,11 @@ export async function startSandbox({ jwt, outputVideo, sourceTrack, prompt }) {
   await session.setPrompt({ prompt });
   await session.start();
 
-  return sandboxControls(session, (nextPrompt) => session.setPrompt({ prompt: nextPrompt }));
+  return {
+    ...sandboxControls(session, (nextPrompt) => session.setPrompt({ prompt: nextPrompt })),
+    replaceSource: async (nextTrack) => {
+      await session.unpublishCamera();
+      await session.publishCamera(nextTrack);
+    },
+  };
 }

@@ -4,6 +4,7 @@ import { attachMainVideo, sandboxControls } from "../shared.js";
 export const model = {
   slug: "longlive-v2",
   name: "LongLive 2",
+  docs: "https://docs.reactor.inc/model-api-reference/longlive-v2/overview",
 };
 
 export async function startSandbox({ jwt, outputVideo, prompt }) {

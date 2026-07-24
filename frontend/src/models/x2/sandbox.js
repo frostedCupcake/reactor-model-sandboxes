@@ -4,6 +4,7 @@ import { attachMainVideo, sandboxControls, uploadImage } from "../shared.js";
 export const model = {
   slug: "x2",
   name: "X2",
+  docs: "https://docs.reactor.inc/model-api-reference/x2/overview",
   requiresVideo: true,
   requiresReference: true,
 };
@@ -24,5 +25,17 @@ export async function startSandbox({ jwt, outputVideo, sourceTrack, referenceFil
   });
   await session.setPrompt({ prompt });
 
-  return sandboxControls(session, (nextPrompt) => session.setPrompt({ prompt: nextPrompt }));
+  return {
+    ...sandboxControls(session, (nextPrompt) => session.setPrompt({ prompt: nextPrompt })),
+    updateReference: (file) => uploadImage(session, file, {
+      acceptedType: "reference_image_accepted",
+      method: "setReferenceImage",
+      field: "reference_image",
+    }),
+    setPointer: ({ x, y, active }) => session.setPointer({
+      pointer_x: Math.min(1, Math.max(0, x)),
+      pointer_y: Math.min(1, Math.max(0, y)),
+      pointer_active: Boolean(active),
+    }),
+  };
 }

@@ -4,6 +4,7 @@ import { attachMainVideo, sandboxControls, uploadImage } from "../shared.js";
 export const model = {
   slug: "helios",
   name: "Helios",
+  docs: "https://docs.reactor.inc/model-api-reference/helios/overview",
   acceptsReference: true,
 };
 
@@ -17,5 +18,9 @@ export async function startSandbox({ jwt, outputVideo, referenceFile, prompt }) 
   await session.setPrompt({ prompt });
   await session.start();
 
-  return sandboxControls(session, (nextPrompt) => session.setPrompt({ prompt: nextPrompt }));
+  return {
+    ...sandboxControls(session, (nextPrompt) => session.setPrompt({ prompt: nextPrompt })),
+    updateReference: (file) => uploadImage(session, file, { extra: { image_b64: "" } }),
+    setImageStrength: (value) => session.setImageStrength({ image_strength: Number(value) }),
+  };
 }
