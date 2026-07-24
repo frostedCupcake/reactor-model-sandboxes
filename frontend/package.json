@@ -1,0 +1,29 @@
+{
+  "name": "reactor-model-sandboxes-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@reactor-models/happy-oyster": "^0.2.1",
+    "@reactor-models/helios": "^0.9.15",
+    "@reactor-models/lingbot": "^0.2.43",
+    "@reactor-models/lingbot-world-2": "^0.3.3",
+    "@reactor-models/longlive-v2": "^3.0.12",
+    "@reactor-models/sana-streaming": "^1.0.1",
+    "@reactor-models/x2": "^0.5.2",
+    "@reactor-team/js-sdk": "^2.12.2",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^4.7.0",
+    "tailwindcss": "^4.3.3",
+    "vite": "^6.4.3"
+  }
+}

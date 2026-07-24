@@ -1,19 +1,19 @@
 {
-  "name": "launchd-reactor-model-sandboxes",
+  "name": "reactor-model-sandboxes",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
-    "check": "node scripts/check.mjs"
+    "dev": "concurrently --kill-others-on-fail --names backend,frontend \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
+    "build": "npm run build --workspace frontend",
+    "test": "npm run test --workspace backend",
+    "check": "npm run check --workspace backend && npm run test --workspace backend && npm run build --workspace frontend"
   },
-  "dependencies": {
-    "@reactor-models/happy-oyster": "^0.2.1",
-    "@reactor-models/helios": "^0.9.15",
-    "@reactor-models/lingbot": "^0.2.43",
-    "@reactor-models/lingbot-world-2": "^0.3.3",
-    "@reactor-models/longlive-v2": "^3.0.12",
-    "@reactor-models/sana-streaming": "^1.0.1",
-    "@reactor-models/x2": "^0.5.2"
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   },
   "overrides": {
     "awaitqueue": "3.3.0",
