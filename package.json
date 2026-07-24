@@ -1,0 +1,23 @@
+{
+  "name": "launchd-reactor-model-sandboxes",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check.mjs"
+  },
+  "dependencies": {
+    "@reactor-models/happy-oyster": "^0.2.1",
+    "@reactor-models/helios": "^0.9.15",
+    "@reactor-models/lingbot": "^0.2.43",
+    "@reactor-models/lingbot-world-2": "^0.3.3",
+    "@reactor-models/longlive-v2": "^3.0.12",
+    "@reactor-models/sana-streaming": "^1.0.1",
+    "@reactor-models/x2": "^0.5.2"
+  },
+  "overrides": {
+    "awaitqueue": "3.3.0",
+    "axios": "1.18.1",
+    "uuid": "11.1.1"
+  }
+}
