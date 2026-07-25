@@ -498,6 +498,21 @@ export default function ReactorModelSandbox({ model }) {
           await stopModel();
           await startModel({ restart: true });
         }
+      } else if (model.slug === "x2") {
+        const nextPrompt = prompt.trim();
+        const accepted = waitForModelMessage(
+          activeModel,
+          (message) => message?.type === "prompt_accepted" && message.prompt === nextPrompt,
+          20_000,
+          "X2 did not confirm the new prompt in time.",
+        );
+        await Promise.all([activeModel.setPrompt({ prompt: nextPrompt }), accepted]);
+        await activeModel.setKeepBacklog?.({ keep_backlog: false });
+        if (isPaused) {
+          await resumeActiveModel(activeModel);
+          setIsPaused(false);
+        }
+        setToastMessage("Prompt accepted. X2 is updating from the next video block.");
       } else {
         await activeModel.setPrompt({ prompt: prompt.trim() });
       }
@@ -981,12 +996,12 @@ function subscribeModelMessages(activeModel, handler) {
   return () => activeModel.off?.("message", wrappedHandler);
 }
 
-function waitForModelMessage(activeModel, predicate, timeoutMs = 20_000) {
+function waitForModelMessage(activeModel, predicate, timeoutMs = 20_000, timeoutMessage = "Reactor did not confirm the reference image in time.") {
   return new Promise((resolve, reject) => {
     let unsubscribe = () => {};
     const timeout = window.setTimeout(() => {
       unsubscribe();
-      reject(new Error("Reactor did not confirm the reference image in time."));
+      reject(new Error(timeoutMessage));
     }, timeoutMs);
     unsubscribe = subscribeModelMessages(activeModel, (message) => {
       if (message?.type === "command_error") {
