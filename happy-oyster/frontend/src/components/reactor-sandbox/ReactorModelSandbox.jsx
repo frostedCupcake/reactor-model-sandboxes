@@ -48,6 +48,7 @@ export default function ReactorModelSandbox({ model }) {
   const [keyDialogError, setKeyDialogError] = useState("");
   const [toastMessage, setToastMessage] = useState("");
   const [isPaused, setIsPaused] = useState(false);
+  const [isApplyingPrompt, setIsApplyingPrompt] = useState(false);
   const [mode, setMode] = useState("adventure");
   const [rotationSpeed, setRotationSpeed] = useState(5);
   const [referenceFile, setReferenceFile] = useState(null);
@@ -333,6 +334,7 @@ export default function ReactorModelSandbox({ model }) {
     const restart = options?.restart === true;
     const skipKeyCheck = options?.skipKeyCheck === true;
     const restorePaused = options?.restorePaused === true;
+    if (!restorePaused) restoreAttemptedRef.current = true;
     if (!prompt.trim() || isBusy || (isLive && !restart)) return;
     const hasKey = isKeyStatusLoaded ? hasSavedApiKey : await loadKeyStatus().catch(() => false);
     if (!skipKeyCheck && !hasKey) {
@@ -462,7 +464,7 @@ export default function ReactorModelSandbox({ model }) {
       setKeyExpiresAt(data.expiresAt);
       setApiKeyDraft("");
       setIsKeyDialogOpen(false);
-      setToastMessage("API key saved securely for 30 minutes.");
+      setToastMessage("API key saved securely for one hour across all models.");
       await startModel({ skipKeyCheck: true });
     } catch (saveError) {
       setKeyDialogError(saveError?.message || "The API key could not be saved.");
@@ -486,8 +488,10 @@ export default function ReactorModelSandbox({ model }) {
 
   async function applyPrompt() {
     const activeModel = modelRef.current;
-    if (!activeModel || !prompt.trim()) return;
+    if (!activeModel || !prompt.trim() || isApplyingPrompt) return;
     setError("");
+    setIsApplyingPrompt(true);
+    setToastMessage("Applying prompt…");
     try {
       if (model.slug === "longlive-v2") {
         await activeModel.sceneCut({ prompt: prompt.trim() });
@@ -498,12 +502,40 @@ export default function ReactorModelSandbox({ model }) {
           await stopModel();
           await startModel({ restart: true });
         }
+      } else if (model.slug === "x2") {
+        const nextPrompt = prompt.trim();
+        if (isPaused) {
+          await resumeActiveModel(activeModel);
+          setIsPaused(false);
+        }
+        const accepted = waitForModelMessage(
+          activeModel,
+          (message) => message?.type === "prompt_accepted" && message.prompt === nextPrompt,
+          20_000,
+          "X2 did not confirm the new prompt in time.",
+        );
+        await Promise.all([activeModel.setPrompt({ prompt: nextPrompt }), accepted]);
+        await activeModel.setKeepBacklog?.({ keep_backlog: false });
+        const reference = await getReferenceBlob();
+        if (!reference) throw new Error("Choose a reference image before applying the X2 prompt.");
+        const restarted = waitForModelMessage(
+          activeModel,
+          (message) => message?.type === "generation_started" && (!message.prompt || message.prompt === nextPrompt),
+          60_000,
+          "X2 accepted the prompt but did not restart generation.",
+        );
+        await Promise.all([uploadReference(activeModel, reference), restarted]);
+        setToastMessage("Prompt applied. X2 restarted with your changes.");
       } else {
         await activeModel.setPrompt({ prompt: prompt.trim() });
       }
       if (!(model.slug === "happy-oyster" && mode !== "directing")) rememberPrompt(prompt.trim());
     } catch (promptError) {
-      setError(promptError?.message || "The prompt could not be applied.");
+      const message = promptError?.message || "The prompt could not be applied.";
+      setError(message);
+      setToastMessage(message);
+    } finally {
+      setIsApplyingPrompt(false);
     }
   }
 
@@ -738,6 +770,7 @@ export default function ReactorModelSandbox({ model }) {
                 applyPrompt={applyPrompt}
                 isLive={isLive}
                 isBusy={isBusy}
+                isApplyingPrompt={isApplyingPrompt}
                 error={error}
                 scenes={scenes}
                 promptHistory={promptHistory}
@@ -825,7 +858,7 @@ export default function ReactorModelSandbox({ model }) {
           <form onSubmit={saveApiKeyAndStart} role="dialog" aria-modal="true" aria-labelledby="reactor-key-title" className="w-full max-w-md rounded-2xl border border-white/15 bg-[#faf5f2] p-6 text-[#143d50] shadow-2xl">
             <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-[#a83e62]">Reactor access</p>
             <h2 id="reactor-key-title" className="font-display mt-2 text-3xl font-extrabold tracking-[-0.04em]">Add Reactor API key</h2>
-            <p className="mt-2 text-sm leading-relaxed text-[#5f6d72]">Your key is encrypted in a secure, HTTP-only session for 30 minutes, then expires automatically. Frontend JavaScript cannot access it.</p>
+            <p className="mt-2 text-sm leading-relaxed text-[#5f6d72]">Your key is encrypted in a secure, HTTP-only session for one hour and works across all models. Frontend JavaScript cannot access it.</p>
             <label className="mt-5 block">
               <span className="font-mono text-[11px] uppercase tracking-[0.08em]">API key</span>
               <input autoFocus type="password" value={apiKeyDraft} onChange={(event) => setApiKeyDraft(event.target.value)} aria-label="Reactor API key" autoComplete="off" autoCapitalize="none" spellCheck={false} className="mt-2 min-h-12 w-full rounded-lg border border-[#143d50]/15 bg-white px-3 text-base outline-none focus:border-[#cf6d88] focus:ring-2 focus:ring-[#cf6d88]/20" />
@@ -842,9 +875,9 @@ export default function ReactorModelSandbox({ model }) {
   );
 }
 
-function ControlPanel({ model, prompt, setPrompt, mode, setMode, referencePreview, selectedReferenceName, selectBuiltInReference, handleReference, sourceMode, videoClipName, handleVideoClip, clearVideoClip, selectWebcam, cameraEnabled, enableCamera, startModel, applyPrompt, isLive, isBusy, error, scenes, promptHistory, openPromptHistory }) {
+function ControlPanel({ model, prompt, setPrompt, mode, setMode, referencePreview, selectedReferenceName, selectBuiltInReference, handleReference, sourceMode, videoClipName, handleVideoClip, clearVideoClip, selectWebcam, cameraEnabled, enableCamera, startModel, applyPrompt, isLive, isBusy, isApplyingPrompt, error, scenes, promptHistory, openPromptHistory }) {
   const references = WORLD_REFERENCES[model.slug] || [];
-  const primaryButtonLabel = isBusy ? "Starting…" : isLive ? "Apply prompt" : "Start session";
+  const primaryButtonLabel = isBusy ? "Starting…" : isApplyingPrompt ? "Applying…" : isLive ? "Apply prompt" : "Start session";
   return (
     <div>
       {model.family === "happy" && (
@@ -904,7 +937,7 @@ function ControlPanel({ model, prompt, setPrompt, mode, setMode, referencePrevie
       >
         {model.presets && <div className="mb-2 flex flex-wrap gap-1.5">{model.presets.map((preset) => <button key={preset} type="button" onClick={() => setPrompt(preset)} className="rounded border border-[#143d50]/10 px-2 py-1 text-xs text-[#5f6d72] transition-colors hover:border-[#cf6d88]/45 hover:text-[#143d50]">{preset}</button>)}</div>}
         <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={model.family === "storyboard" ? 3 : 5} placeholder="Describe what you want to generate…" aria-label="Generation prompt" className="w-full resize-none rounded-lg border border-[#143d50]/10 bg-[#143d50]/[0.035] p-3 text-base leading-snug text-[#143d50] outline-none placeholder:text-[#5f6d72]/55 focus:border-[#cf6d88] focus:ring-2 focus:ring-[#cf6d88]/15" />
-        <button type="button" onClick={isLive ? applyPrompt : startModel} disabled={!prompt.trim() || isBusy} className={`mt-3 min-h-11 w-full bg-[#cf6d88] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#c15c7a] disabled:cursor-not-allowed disabled:opacity-45 ${isLive ? "" : "lg:hidden"} ${BUILD_ONE_CLIP} ${BUILD_ONE_FOCUS}`}>{primaryButtonLabel}</button>
+        <button type="button" onClick={isLive ? applyPrompt : startModel} disabled={!prompt.trim() || isBusy || isApplyingPrompt} aria-busy={isApplyingPrompt} className={`mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 bg-[#cf6d88] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#c15c7a] disabled:cursor-not-allowed disabled:opacity-45 ${isLive ? "" : "lg:hidden"} ${BUILD_ONE_CLIP} ${BUILD_ONE_FOCUS}`}>{isApplyingPrompt && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/35 border-t-white motion-reduce:animate-none" aria-hidden />}{primaryButtonLabel}</button>
         {model.family === "storyboard" && <p className="mt-2 text-[11px]">Each applied prompt adds a new scene to the timeline.</p>}
       </PanelSection>
       {error && <p role="alert" className="mx-4 mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error} {!error.toLowerCase().includes("sign in") ? null : <> <Link href="/login" className="font-semibold underline underline-offset-2">Sign in</Link></>}</p>}
@@ -981,12 +1014,12 @@ function subscribeModelMessages(activeModel, handler) {
   return () => activeModel.off?.("message", wrappedHandler);
 }
 
-function waitForModelMessage(activeModel, predicate, timeoutMs = 20_000) {
+function waitForModelMessage(activeModel, predicate, timeoutMs = 20_000, timeoutMessage = "Reactor did not confirm the reference image in time.") {
   return new Promise((resolve, reject) => {
     let unsubscribe = () => {};
     const timeout = window.setTimeout(() => {
       unsubscribe();
-      reject(new Error("Reactor did not confirm the reference image in time."));
+      reject(new Error(timeoutMessage));
     }, timeoutMs);
     unsubscribe = subscribeModelMessages(activeModel, (message) => {
       if (message?.type === "command_error") {

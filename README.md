@@ -2,7 +2,7 @@
 
 Seven independent projects that reproduce the launchd Reactor sandboxes. Every model folder contains its own browser frontend and trusted token backend—no shared application folder is required.
 
-Every sandbox keeps prompt history, prompt and control values, uploaded references, and uploaded video clips in browser storage. If an active page is refreshed while its 30-minute key session is valid, it reconnects the model and returns in a paused state.
+Every sandbox keeps prompt history, prompt and control values, uploaded references, and uploaded video clips in browser storage. If an active page is refreshed while its one-hour key session is valid, it reconnects the model and returns in a paused state.
 
 ## Choose a model
 
@@ -25,7 +25,7 @@ Every sandbox keeps prompt history, prompt and control values, uploaded referenc
 │   └── public/models/        Built-in reference images
 ├── backend/                  Trusted Node.js token service
 │   ├── src/server.js         HTTP API and CORS
-│   ├── src/session.js        Encrypted 30-minute key session
+│   ├── src/session.js        Encrypted one-hour key session
 │   └── src/reactor.js        Exact model-scoped token request
 ├── package.json              Runs both workspaces
 └── README.md                 Model-specific end-to-end guide
@@ -34,10 +34,10 @@ Every sandbox keeps prompt history, prompt and control values, uploaded referenc
 ## What happens when Start is clicked?
 
 1. The frontend checks `GET /api/reactor/key` on the local backend.
-2. If no valid 30-minute session exists, the frontend asks for the Reactor API key.
+2. If no valid one-hour session exists, the frontend asks for the Reactor API key.
 3. The key is sent only to the backend with `credentials: include`.
 4. The backend requests a JWT scoped to that exact Reactor model.
-5. The backend encrypts the API key into an HTTP-only, 30-minute session cookie.
+5. The backend encrypts the API key into an HTTP-only, one-hour session cookie.
 6. The frontend receives only the short-lived JWT and connects the typed Reactor SDK.
 7. The frontend prepares video/reference media, waits for Reactor’s acceptance event, sets the prompt, and starts generation.
 8. Refresh restores the workspace and reconnects an active session in a paused state.

@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
-export const SESSION_TTL_MS = 30 * 60 * 1_000;
+export const SESSION_TTL_MS = 60 * 60 * 1_000;
 export const SESSION_COOKIE = "reactor_key_session";
 
 function encryptionKey() {

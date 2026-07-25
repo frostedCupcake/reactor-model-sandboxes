@@ -100,7 +100,7 @@ npm run dev --workspace frontend
 2. Enter a generation prompt and optionally select or upload a reference image.
 3. Click **Start session**.
 4. Enter the Reactor API key when the dialog appears.
-5. Click **Save and start**. The key is encrypted for 30 minutes; the browser receives only a scoped JWT.
+5. Click **Save and start**. The key is encrypted for one hour; the browser receives only a scoped JWT.
 6. Follow the connection stages until the status changes to **Live**.
 7. Apply another prompt, update the reference, adjust image strength through the adapter, or pause and resume.
 8. Click **Disconnect** when finished. This releases the session and stops billing.
@@ -111,7 +111,7 @@ npm run dev --workspace frontend
 | --- | --- | --- |
 | `GET` | `/health` | Service readiness |
 | `GET` | `/api/reactor/key` | Check whether the encrypted key session is valid |
-| `POST` | `/api/reactor/key` | Validate a key, create the 30-minute session, and return the first scoped JWT |
+| `POST` | `/api/reactor/key` | Validate a key, create the one-hour session, and return the first scoped JWT |
 | `DELETE` | `/api/reactor/key` | Clear the encrypted key session |
 | `POST` | `/api/reactor/token` | Mint another short-lived JWT from the saved key session |
 
@@ -146,7 +146,7 @@ COOKIE_SECURE=true
 COOKIE_SAME_SITE=Lax
 ```
 
-Use `COOKIE_SAME_SITE=None` with `COOKIE_SECURE=true` when the frontend and backend are hosted on different sites. Keep `SESSION_SECRET` stable across backend restarts or saved 30-minute sessions cannot be decrypted.
+Use `COOKIE_SAME_SITE=None` with `COOKIE_SECURE=true` when the frontend and backend are hosted on different sites. Keep `SESSION_SECRET` stable across backend restarts or saved one-hour sessions cannot be decrypted.
 
 Configure the frontend host to serve `index.html` as the fallback for browser routes.
 

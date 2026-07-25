@@ -4,6 +4,10 @@ import { createKeySession, readKeySession, SESSION_TTL_MS } from "../src/session
 
 process.env.SESSION_SECRET = "test-only-session-secret-with-at-least-32-characters";
 
+test("keeps an encrypted API key session for one hour", () => {
+  assert.equal(SESSION_TTL_MS, 60 * 60 * 1_000);
+});
+
 test("encrypts and restores a Reactor API key", () => {
   const now = 1_700_000_000_000;
   const session = createKeySession("example-key-not-real", now);
