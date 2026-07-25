@@ -1,13 +1,12 @@
 # Reactor model sandboxes
 
-Seven independent projects that reproduce the launchd Reactor sandboxes. Every model folder contains its own browser frontend and trusted token backend—no shared application folder is required.
+Six independent projects that reproduce the launchd Reactor sandboxes. Every model folder contains its own browser frontend and trusted token backend—no shared application folder is required.
 
 Every sandbox keeps prompt history, prompt and control values, uploaded references, and uploaded video clips in browser storage. If an active page is refreshed while its one-hour key session is valid, it reconnects the model and returns in a paused state.
 
 ## Choose a model
 
 - [X2](./x2)
-- [Happy Oyster](./happy-oyster)
 - [LingBot World 2](./lingbot-world-2)
 - [SANA-Streaming](./sana-streaming)
 - [LingBot](./lingbot)
