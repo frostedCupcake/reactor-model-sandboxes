@@ -500,6 +500,10 @@ export default function ReactorModelSandbox({ model }) {
         }
       } else if (model.slug === "x2") {
         const nextPrompt = prompt.trim();
+        if (isPaused) {
+          await resumeActiveModel(activeModel);
+          setIsPaused(false);
+        }
         const accepted = waitForModelMessage(
           activeModel,
           (message) => message?.type === "prompt_accepted" && message.prompt === nextPrompt,
@@ -508,11 +512,16 @@ export default function ReactorModelSandbox({ model }) {
         );
         await Promise.all([activeModel.setPrompt({ prompt: nextPrompt }), accepted]);
         await activeModel.setKeepBacklog?.({ keep_backlog: false });
-        if (isPaused) {
-          await resumeActiveModel(activeModel);
-          setIsPaused(false);
-        }
-        setToastMessage("Prompt accepted. X2 is updating from the next video block.");
+        const reference = await getReferenceBlob();
+        if (!reference) throw new Error("Choose a reference image before applying the X2 prompt.");
+        const restarted = waitForModelMessage(
+          activeModel,
+          (message) => message?.type === "generation_started" && (!message.prompt || message.prompt === nextPrompt),
+          60_000,
+          "X2 accepted the prompt but did not restart generation.",
+        );
+        await Promise.all([uploadReference(activeModel, reference), restarted]);
+        setToastMessage("Prompt applied. X2 restarted with your changes.");
       } else {
         await activeModel.setPrompt({ prompt: prompt.trim() });
       }
