@@ -2,6 +2,8 @@
 
 Seven independent projects that reproduce the launchd Reactor sandboxes. Every model folder contains its own browser frontend and trusted token backend—no shared application folder is required.
 
+Every sandbox keeps prompt history, prompt and control values, uploaded references, and uploaded video clips in browser storage. If an active page is refreshed while its 30-minute key session is valid, it reconnects the model and returns in a paused state.
+
 ## Choose a model
 
 - [X2](./x2)
@@ -38,7 +40,8 @@ Seven independent projects that reproduce the launchd Reactor sandboxes. Every m
 5. The backend encrypts the API key into an HTTP-only, 30-minute session cookie.
 6. The frontend receives only the short-lived JWT and connects the typed Reactor SDK.
 7. The frontend prepares video/reference media, waits for Reactor’s acceptance event, sets the prompt, and starts generation.
-8. Disconnect releases the Reactor session and media tracks.
+8. Refresh restores the workspace and reconnects an active session in a paused state.
+9. Disconnect releases the Reactor session and media tracks.
 
 The long-lived Reactor API key is never placed in frontend source, local storage, or a browser-readable cookie.
 

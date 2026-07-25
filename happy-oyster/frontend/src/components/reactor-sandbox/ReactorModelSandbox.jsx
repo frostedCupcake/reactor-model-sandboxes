@@ -4,6 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { mediaUrl } from "@/lib/media";
 import { REACTOR_MODELS } from "@/lib/reactor-models";
 import { loadModel } from "@/model-loader";
+import {
+  createPromptHistoryEntry,
+  deleteReactorWorkspaceFile,
+  PROMPT_HISTORY_LIMIT,
+  readReactorWorkspace,
+  readReactorWorkspaceFile,
+  saveReactorWorkspaceFile,
+  writeReactorWorkspace,
+} from "@/lib/reactor-workspace-storage";
 
 const REACTOR_BACKEND_URL = (import.meta.env.VITE_REACTOR_BACKEND_URL || "http://localhost:8787").replace(/\/$/, "");
 const reactorApiUrl = (path) => `${REACTOR_BACKEND_URL}${path}`;
@@ -49,6 +58,9 @@ export default function ReactorModelSandbox({ model }) {
   const [videoClipUrl, setVideoClipUrl] = useState("");
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [scenes, setScenes] = useState([]);
+  const [promptHistory, setPromptHistory] = useState([]);
+  const [isPromptHistoryOpen, setIsPromptHistoryOpen] = useState(false);
+  const [isWorkspaceHydrated, setIsWorkspaceHydrated] = useState(false);
   const modelRef = useRef(null);
   const streamRef = useRef(null);
   const outputVideoRef = useRef(null);
@@ -58,6 +70,8 @@ export default function ReactorModelSandbox({ model }) {
   const startupErrorRef = useRef("");
   const startAttemptRef = useRef(0);
   const pendingJwtRef = useRef("");
+  const restoreSessionRef = useRef(false);
+  const restoreAttemptedRef = useRef(false);
 
   const isLive = status === "live";
   const isBusy = status === "connecting";
@@ -67,7 +81,8 @@ export default function ReactorModelSandbox({ model }) {
     setStatus(nextStatus);
   }, []);
 
-  const stopModel = useCallback(async () => {
+  const stopModel = useCallback(async (options = {}) => {
+    if (options?.preserveRestoreState !== true) restoreSessionRef.current = false;
     startAttemptRef.current += 1;
     const activeModel = modelRef.current;
     modelRef.current = null;
@@ -91,7 +106,7 @@ export default function ReactorModelSandbox({ model }) {
     setIsPaused(false);
   }, [updateStatus]);
 
-  useEffect(() => () => void stopModel(), [stopModel]);
+  useEffect(() => () => void stopModel({ preserveRestoreState: true }), [stopModel]);
   useEffect(() => {
     void loadKeyStatus();
   }, []);
@@ -109,15 +124,79 @@ export default function ReactorModelSandbox({ model }) {
     return () => window.clearTimeout(timeout);
   }, [toastMessage]);
   useEffect(() => {
-    setPrompt(model.prompt);
-    setReferenceFile(null);
-    setReferencePreview("");
-    setSelectedReferenceName(WORLD_REFERENCES[model.slug]?.[0] || "");
-    setSourceMode("webcam");
-    setVideoClipName("");
-    setVideoClipUrl("");
-    setScenes([]);
-  }, [model]);
+    let cancelled = false;
+    restoreAttemptedRef.current = false;
+    setIsWorkspaceHydrated(false);
+    const hydrateWorkspace = async () => {
+      const saved = readReactorWorkspace(model.slug);
+      const history = Array.isArray(saved?.promptHistory)
+        ? saved.promptHistory.filter((entry) => typeof entry?.prompt === "string").slice(0, PROMPT_HISTORY_LIMIT)
+        : [];
+      const savedReference = saved?.referenceSource === "upload"
+        ? await readReactorWorkspaceFile(model.slug, "reference").catch(() => null)
+        : null;
+      const savedVideo = saved?.sourceMode === "video"
+        ? await readReactorWorkspaceFile(model.slug, "video").catch(() => null)
+        : null;
+      if (cancelled) return;
+      setPrompt(typeof saved?.prompt === "string" ? saved.prompt : model.prompt);
+      setPromptHistory(history);
+      setMode(saved?.mode === "directing" ? "directing" : "adventure");
+      setRotationSpeed(Number.isFinite(Number(saved?.rotationSpeed)) ? Number(saved.rotationSpeed) : 5);
+      setScenes(Array.isArray(saved?.scenes) ? saved.scenes.filter((scene) => typeof scene?.prompt === "string") : []);
+      setReferenceFile(savedReference);
+      setReferencePreview(savedReference ? URL.createObjectURL(savedReference) : "");
+      setSelectedReferenceName(savedReference?.name || saved?.selectedReferenceName || WORLD_REFERENCES[model.slug]?.[0] || "");
+      setSourceMode(savedVideo ? "video" : "webcam");
+      setVideoClipName(savedVideo?.name || "");
+      setVideoClipUrl(savedVideo ? URL.createObjectURL(savedVideo) : "");
+      setCameraEnabled(false);
+      restoreSessionRef.current = Boolean(saved?.shouldRestoreSession);
+      setIsWorkspaceHydrated(true);
+    };
+    void hydrateWorkspace();
+    return () => {
+      cancelled = true;
+    };
+  }, [model.prompt, model.slug]);
+
+  useEffect(() => {
+    if (!isWorkspaceHydrated) return;
+    writeReactorWorkspace(model.slug, {
+      prompt,
+      promptHistory,
+      mode,
+      rotationSpeed,
+      scenes,
+      referenceSource: referenceFile ? "upload" : "builtin",
+      selectedReferenceName,
+      sourceMode,
+      videoClipName,
+      shouldRestoreSession: restoreSessionRef.current || status === "live" || status === "connecting",
+    });
+  }, [isWorkspaceHydrated, mode, model.slug, prompt, promptHistory, referenceFile, rotationSpeed, scenes, selectedReferenceName, sourceMode, status, videoClipName]);
+
+  useEffect(() => {
+    if (!isWorkspaceHydrated || !isKeyStatusLoaded || restoreAttemptedRef.current || !restoreSessionRef.current) return;
+    restoreAttemptedRef.current = true;
+    if (!hasSavedApiKey) {
+      restoreSessionRef.current = false;
+      setToastMessage("Your previous workspace was restored. Start again to reconnect the model.");
+      return;
+    }
+    setToastMessage("Restoring your previous session…");
+    const timeout = window.setTimeout(() => void startModel({ skipKeyCheck: true, restorePaused: true }), 0);
+    return () => window.clearTimeout(timeout);
+  }, [hasSavedApiKey, isKeyStatusLoaded, isWorkspaceHydrated, model.slug]);
+
+  useEffect(() => {
+    if (!isPromptHistoryOpen) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setIsPromptHistoryOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isPromptHistoryOpen]);
 
   useEffect(() => () => {
     if (referencePreview) URL.revokeObjectURL(referencePreview);
@@ -140,7 +219,7 @@ export default function ReactorModelSandbox({ model }) {
     return saved;
   }
 
-  async function getToken() {
+  async function getToken(options = {}) {
     if (pendingJwtRef.current) {
       const jwt = pendingJwtRef.current;
       pendingJwtRef.current = "";
@@ -153,6 +232,11 @@ export default function ReactorModelSandbox({ model }) {
       body: JSON.stringify({ model: model.slug, mode }),
     });
     const data = await response.json().catch(() => null);
+    if (response.status === 429 && options?.retryOnRateLimit) {
+      setConnectionStage("Waiting to reconnect");
+      await new Promise((resolve) => window.setTimeout(resolve, Math.max(250, Number(data?.retryAfterMs) || 10_000)));
+      return getToken({ retryOnRateLimit: false });
+    }
     if (!response.ok || !data?.jwt) {
       const tokenError = new Error(data?.error || "Could not start a Reactor session.");
       tokenError.requiresApiKey = Boolean(data?.requiresApiKey);
@@ -183,6 +267,8 @@ export default function ReactorModelSandbox({ model }) {
         setConnectionStage("");
         updateStatus("live");
       }
+      if (message?.type === "generation_paused" || (message?.type === "state" && message.paused === true)) setIsPaused(true);
+      if (message?.type === "generation_resumed" || (message?.type === "state" && message.paused === false && message.started)) setIsPaused(false);
     });
     activeModel.onPhaseChanged?.((phase) => {
       if (phase === "streaming") updateStatus("live");
@@ -246,6 +332,7 @@ export default function ReactorModelSandbox({ model }) {
   async function startModel(options = {}) {
     const restart = options?.restart === true;
     const skipKeyCheck = options?.skipKeyCheck === true;
+    const restorePaused = options?.restorePaused === true;
     if (!prompt.trim() || isBusy || (isLive && !restart)) return;
     const hasKey = isKeyStatusLoaded ? hasSavedApiKey : await loadKeyStatus().catch(() => false);
     if (!skipKeyCheck && !hasKey) {
@@ -261,9 +348,12 @@ export default function ReactorModelSandbox({ model }) {
       if (startAttemptRef.current !== attemptId) throw new DOMException("Connection cancelled", "AbortError");
     };
     setConnectionStage("Connecting to Reactor");
+    restoreSessionRef.current = true;
+    setIsPaused(false);
     updateStatus("connecting");
     try {
-      const [{ module, className }, jwt] = await Promise.all([loadModel(), getToken()]);
+      const loadSelectedModel = globalThis.__REACTOR_TEST_MODEL_LOADER__ || (() => loadModel());
+      const [{ module, className }, jwt] = await Promise.all([loadSelectedModel(model.slug), getToken({ retryOnRateLimit: restorePaused })]);
       let activeModel;
       if (model.slug === "happy-oyster") {
         activeModel = new module[className]({ mode, videoElement: outputVideoRef.current });
@@ -313,7 +403,7 @@ export default function ReactorModelSandbox({ model }) {
         await activeModel.setShot({ prompt: prompt.trim() });
         setConnectionStage("Starting generation");
         await activeModel.start();
-        setScenes([{ prompt: prompt.trim(), at: 0 }]);
+        if (!restorePaused) setScenes([{ prompt: prompt.trim(), at: 0 }]);
       } else {
         setConnectionStage("Uploading reference image");
         const image = await getReferenceBlob();
@@ -331,6 +421,14 @@ export default function ReactorModelSandbox({ model }) {
       setConnectionStage("Waiting for first frames");
       await waitForSessionLive(statusRef, startupErrorRef);
       ensureAttemptIsActive();
+      if (!restorePaused) rememberPrompt(prompt.trim());
+      if (restorePaused) {
+        setConnectionStage("Pausing restored session");
+        await pauseActiveModel(activeModel);
+        setIsPaused(true);
+        setConnectionStage("");
+        setToastMessage("Session restored and paused.");
+      }
     } catch (sessionError) {
       if (startAttemptRef.current !== attemptId || sessionError?.name === "AbortError") return;
       await stopModel();
@@ -376,10 +474,11 @@ export default function ReactorModelSandbox({ model }) {
   async function togglePause() {
     const activeModel = modelRef.current;
     if (!activeModel) return;
+    const shouldResume = isPaused;
     try {
-      if (isPaused) await activeModel.resume?.();
-      else await activeModel.pause?.();
-      setIsPaused((value) => !value);
+      if (shouldResume) await resumeActiveModel(activeModel);
+      else await pauseActiveModel(activeModel);
+      setIsPaused(!shouldResume);
     } catch (pauseError) {
       setError(pauseError?.message || "The stream could not be paused.");
     }
@@ -402,14 +501,42 @@ export default function ReactorModelSandbox({ model }) {
       } else {
         await activeModel.setPrompt({ prompt: prompt.trim() });
       }
+      if (!(model.slug === "happy-oyster" && mode !== "directing")) rememberPrompt(prompt.trim());
     } catch (promptError) {
       setError(promptError?.message || "The prompt could not be applied.");
     }
   }
 
+  function rememberPrompt(value) {
+    const normalized = value.trim();
+    if (!normalized) return;
+    setPromptHistory((current) => [createPromptHistoryEntry(normalized), ...current].slice(0, PROMPT_HISTORY_LIMIT));
+  }
+
+  async function pauseActiveModel(activeModel) {
+    if (model.slug === "x2") {
+      await activeModel.unpublishSource?.();
+      return;
+    }
+    if (!activeModel.pause) throw new Error("This model does not support pausing.");
+    await activeModel.pause();
+  }
+
+  async function resumeActiveModel(activeModel) {
+    if (model.slug === "x2") {
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (!track) throw new Error("The saved video source is no longer available.");
+      await activeModel.publishSource(track);
+      await activeModel.setKeepBacklog?.({ keep_backlog: false });
+      return;
+    }
+    if (!activeModel.resume) throw new Error("This model does not support resuming.");
+    await activeModel.resume();
+  }
+
   async function sendWorldControl(type, value, active) {
     const activeModel = modelRef.current;
-    if (!activeModel || !isLive) return;
+    if (!activeModel || !isLive || isPaused) return;
     try {
       if (model.slug === "happy-oyster") {
         if (active) {
@@ -447,6 +574,11 @@ export default function ReactorModelSandbox({ model }) {
     setReferenceFile(file);
     setReferencePreview(URL.createObjectURL(file));
     setSelectedReferenceName(file.name);
+    try {
+      await saveReactorWorkspaceFile(model.slug, "reference", file);
+    } catch {
+      setError("The reference is selected, but it could not be saved for refresh recovery.");
+    }
     if (model.slug === "x2" && isLive) {
       try {
         await uploadReference(modelRef.current, file);
@@ -460,6 +592,7 @@ export default function ReactorModelSandbox({ model }) {
     setReferenceFile(null);
     setReferencePreview("");
     setSelectedReferenceName(image);
+    void deleteReactorWorkspaceFile(model.slug, "reference").catch(() => {});
     if (model.slug === "x2" && isLive) {
       try {
         const response = await fetch(mediaUrl(`/models/${image}`), { cache: "reload" });
@@ -472,7 +605,7 @@ export default function ReactorModelSandbox({ model }) {
     }
   }
 
-  function handleVideoClip(event) {
+  async function handleVideoClip(event) {
     const file = event.target.files?.[0];
     if (!file) return;
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -483,6 +616,11 @@ export default function ReactorModelSandbox({ model }) {
     setVideoClipName(file.name);
     setVideoClipUrl(URL.createObjectURL(file));
     event.target.value = "";
+    try {
+      await saveReactorWorkspaceFile(model.slug, "video", file);
+    } catch {
+      setError("The video is selected, but it could not be saved for refresh recovery.");
+    }
   }
 
   async function clearVideoClip() {
@@ -499,6 +637,7 @@ export default function ReactorModelSandbox({ model }) {
     setVideoClipName("");
     setVideoClipUrl("");
     setSourceMode("webcam");
+    await deleteReactorWorkspaceFile(model.slug, "video").catch(() => {});
   }
 
   function selectWebcam() {
@@ -511,7 +650,7 @@ export default function ReactorModelSandbox({ model }) {
 
   async function handleOutputPointer(event, isActive) {
     const activeModel = modelRef.current;
-    if (model.slug !== "x2" || !isLive || !activeModel?.setPointer) return;
+    if (model.slug !== "x2" || !isLive || isPaused || !activeModel?.setPointer) return;
     try {
       const bounds = event.currentTarget.getBoundingClientRect();
       const pointerX = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
@@ -524,7 +663,7 @@ export default function ReactorModelSandbox({ model }) {
   }
 
   useEffect(() => {
-    const canUseKeyboard = isLive && (model.family === "world" || (model.family === "happy" && mode === "adventure"));
+    const canUseKeyboard = isLive && !isPaused && (model.family === "world" || (model.family === "happy" && mode === "adventure"));
     if (!canUseKeyboard) return undefined;
 
     const heldKeys = new Map();
@@ -561,7 +700,7 @@ export default function ReactorModelSandbox({ model }) {
       window.removeEventListener("keyup", handleKeyUp);
       heldKeys.forEach((control) => void sendWorldControl(control[0], control[1], false));
     };
-  }, [isLive, mode, model.family, model.slug]);
+  }, [isLive, isPaused, mode, model.family, model.slug]);
 
   return (
     <main className="min-h-screen bg-[#faf5f2] text-[#5f6d72]">
@@ -601,6 +740,8 @@ export default function ReactorModelSandbox({ model }) {
                 isBusy={isBusy}
                 error={error}
                 scenes={scenes}
+                promptHistory={promptHistory}
+                openPromptHistory={() => setIsPromptHistoryOpen(true)}
               />
             </aside>
 
@@ -633,7 +774,7 @@ export default function ReactorModelSandbox({ model }) {
               {(model.family === "world" || (model.family === "happy" && mode === "adventure")) && (
                 <WorldControls
                   model={model}
-                  isLive={isLive}
+                  isLive={isLive && !isPaused}
                   rotationSpeed={rotationSpeed}
                   setRotationSpeed={async (value) => {
                     setRotationSpeed(value);
@@ -649,6 +790,36 @@ export default function ReactorModelSandbox({ model }) {
       </div>
       <ReactorFooter />
       {toastMessage && <div role="status" className="fixed right-4 top-4 z-[70] max-w-sm rounded-lg bg-[#0b2936] px-4 py-3 text-sm font-semibold text-white shadow-xl">{toastMessage}</div>}
+      {isPromptHistoryOpen && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center bg-[#061a26]/70 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setIsPromptHistoryOpen(false); }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="prompt-history-title" className="flex max-h-[min(720px,85dvh)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#faf5f2] text-[#143d50] shadow-2xl">
+            <header className="flex items-start justify-between gap-4 border-b border-[#143d50]/10 p-5 sm:p-6">
+              <div>
+                <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-[#a83e62]">Workspace</p>
+                <h2 id="prompt-history-title" className="font-display mt-1 text-3xl font-extrabold tracking-[-0.04em]">Prompt history</h2>
+              </div>
+              <button type="button" onClick={() => setIsPromptHistoryOpen(false)} aria-label="Close prompt history" className="flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-[#143d50]/15 bg-white text-xl text-[#143d50] hover:border-[#cf6d88]">×</button>
+            </header>
+            <div className="overflow-y-auto p-3 sm:p-4">
+              {promptHistory.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-[#143d50]/20 p-8 text-center text-sm text-[#5f6d72]">Prompts you run will appear here.</p>
+              ) : (
+                <ol className="grid gap-2">
+                  {promptHistory.map((entry) => (
+                    <li key={entry.id} className="rounded-xl border border-[#143d50]/10 bg-white p-4">
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed text-[#143d50]">{entry.prompt}</p>
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                        <time className="font-mono text-[10px] uppercase tracking-[0.06em] text-[#5f6d72]" dateTime={formatPromptHistoryIso(entry.createdAt)}>{formatPromptHistoryTime(entry.createdAt)}</time>
+                        <button type="button" onClick={() => { setPrompt(entry.prompt); setIsPromptHistoryOpen(false); }} className="min-h-9 rounded-lg border border-[#cf6d88]/45 px-3 text-xs font-semibold text-[#a83e62] hover:border-[#cf6d88] hover:bg-[#cf6d88] hover:text-white">Use prompt</button>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
       {isKeyDialogOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#061a26]/70 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !isSavingKey) setIsKeyDialogOpen(false); }}>
           <form onSubmit={saveApiKeyAndStart} role="dialog" aria-modal="true" aria-labelledby="reactor-key-title" className="w-full max-w-md rounded-2xl border border-white/15 bg-[#faf5f2] p-6 text-[#143d50] shadow-2xl">
@@ -671,7 +842,7 @@ export default function ReactorModelSandbox({ model }) {
   );
 }
 
-function ControlPanel({ model, prompt, setPrompt, mode, setMode, referencePreview, selectedReferenceName, selectBuiltInReference, handleReference, sourceMode, videoClipName, handleVideoClip, clearVideoClip, selectWebcam, cameraEnabled, enableCamera, startModel, applyPrompt, isLive, isBusy, error, scenes }) {
+function ControlPanel({ model, prompt, setPrompt, mode, setMode, referencePreview, selectedReferenceName, selectBuiltInReference, handleReference, sourceMode, videoClipName, handleVideoClip, clearVideoClip, selectWebcam, cameraEnabled, enableCamera, startModel, applyPrompt, isLive, isBusy, error, scenes, promptHistory, openPromptHistory }) {
   const references = WORLD_REFERENCES[model.slug] || [];
   const primaryButtonLabel = isBusy ? "Starting…" : isLive ? "Apply prompt" : "Start session";
   return (
@@ -727,7 +898,10 @@ function ControlPanel({ model, prompt, setPrompt, mode, setMode, referencePrevie
           {["Martian outpost", "Ratatouille service", "Wildlife montage"].map((title) => <button key={title} type="button" onClick={() => setPrompt(title === "Martian outpost" ? model.prompt : title)} className="mb-2 block w-full rounded-lg border border-[#143d50]/10 p-2 text-left text-sm font-semibold text-[#5f6d72] transition-colors hover:border-[#cf6d88]/45 hover:text-[#143d50]">{title}</button>)}
         </PanelSection>
       )}
-      <PanelSection label={model.family === "camera" ? "Describe the edit" : model.family === "storyboard" ? "Opening shot" : model.family === "prompt" ? "Text prompt" : model.family === "happy" ? "Generate a world" : "Generate the scene"}>
+      <PanelSection
+        label={model.family === "camera" ? "Describe the edit" : model.family === "storyboard" ? "Opening shot" : model.family === "prompt" ? "Text prompt" : model.family === "happy" ? "Generate a world" : "Generate the scene"}
+        action={<button type="button" onClick={openPromptHistory} className="rounded border border-[#143d50]/15 bg-white px-2 py-1 font-sans text-[11px] font-semibold normal-case tracking-normal text-[#a83e62] hover:border-[#cf6d88]" aria-label={`View prompt history, ${promptHistory.length} saved`}>View prompt history{promptHistory.length ? ` (${promptHistory.length})` : ""}</button>}
+      >
         {model.presets && <div className="mb-2 flex flex-wrap gap-1.5">{model.presets.map((preset) => <button key={preset} type="button" onClick={() => setPrompt(preset)} className="rounded border border-[#143d50]/10 px-2 py-1 text-xs text-[#5f6d72] transition-colors hover:border-[#cf6d88]/45 hover:text-[#143d50]">{preset}</button>)}</div>}
         <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={model.family === "storyboard" ? 3 : 5} placeholder="Describe what you want to generate…" aria-label="Generation prompt" className="w-full resize-none rounded-lg border border-[#143d50]/10 bg-[#143d50]/[0.035] p-3 text-base leading-snug text-[#143d50] outline-none placeholder:text-[#5f6d72]/55 focus:border-[#cf6d88] focus:ring-2 focus:ring-[#cf6d88]/15" />
         <button type="button" onClick={isLive ? applyPrompt : startModel} disabled={!prompt.trim() || isBusy} className={`mt-3 min-h-11 w-full bg-[#cf6d88] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#c15c7a] disabled:cursor-not-allowed disabled:opacity-45 ${isLive ? "" : "lg:hidden"} ${BUILD_ONE_CLIP} ${BUILD_ONE_FOCUS}`}>{primaryButtonLabel}</button>
@@ -739,18 +913,17 @@ function ControlPanel({ model, prompt, setPrompt, mode, setMode, referencePrevie
   );
 }
 
-function PanelSection({ label, children }) {
-  return <section className="border-b border-[#143d50]/10 p-4"><div className="mb-3 font-mono text-[11px] uppercase tracking-[0.08em] text-[#143d50]">{label}</div>{children}</section>;
+function PanelSection({ label, action, children }) {
+  return <section className="border-b border-[#143d50]/10 p-4"><div className="mb-3 flex min-h-6 items-center justify-between gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-[#143d50]"><span>{label}</span>{action}</div>{children}</section>;
 }
 
 function ModelSelector({ model }) {
   return <details className="group relative border-b border-[#143d50]/10"><summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-4 text-[#143d50]"><CubeIcon /><span className="min-w-0 flex-1"><strong className="font-display block text-base leading-tight">{model.name}</strong><span className="block truncate text-xs text-[#5f6d72]">{model.category}</span></span><span className="text-[#a83e62]">⌄</span></summary><div className="absolute left-2 right-2 top-[68px] z-50 grid rounded-xl border border-[#143d50]/10 bg-white p-1 shadow-[0_18px_45px_-24px_rgba(20,61,80,0.55)]">{Object.values(REACTOR_MODELS).map((item) => <Link key={item.slug} href={`/reactor/models/${item.slug}`} className={`rounded-lg px-3 py-2 text-sm text-[#5f6d72] transition-colors hover:bg-[#143d50]/[0.05] hover:text-[#143d50] ${item.slug === model.slug ? "font-semibold text-[#a83e62]" : ""}`}>{item.name}</Link>)}</div></details>;
 }
 
-function PlaybackBar({ model, status, isPaused, canStart, startModel, togglePause, stopModel }) {
+function PlaybackBar({ status, isPaused, canStart, startModel, togglePause, stopModel }) {
   const isSessionLive = status === "live";
   const isConnecting = status === "connecting";
-  const supportsPause = model.slug !== "x2";
   const controlClass = "flex min-h-11 items-center justify-center rounded-lg border px-4 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#cf6d88] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-35";
 
   return (
@@ -759,18 +932,25 @@ function PlaybackBar({ model, status, isPaused, canStart, startModel, togglePaus
         <span className={`h-2 w-2 rounded-full ${isSessionLive ? "bg-emerald-500" : status === "connecting" ? "animate-pulse bg-amber-500" : "bg-[#cf6d88]"}`} />
         <span className="font-mono text-[11px] uppercase tracking-[0.08em]">{status === "connecting" ? "Connecting" : isSessionLive ? (isPaused ? "Paused" : "Live") : "Ready"}</span>
       </span>
-      <div className={`grid w-full gap-2 sm:ml-auto sm:w-auto ${supportsPause ? "grid-cols-3" : "grid-cols-1"} lg:grid-cols-none lg:grid-flow-col`}>
+      <div className="grid w-full grid-cols-3 gap-2 sm:ml-auto sm:w-auto lg:grid-cols-none lg:grid-flow-col">
         <button type="button" onClick={startModel} disabled={status !== "ready" || !canStart} className={`${controlClass} hidden border-[#cf6d88] bg-[#cf6d88] text-white hover:bg-[#c15c7a] lg:flex`} aria-label="Start session">Start</button>
-        {supportsPause && (
-          <>
-            <button type="button" onClick={togglePause} disabled={!isSessionLive || isPaused} className={`${controlClass} border-[#143d50]/15 bg-white text-[#143d50] hover:border-[#143d50]/35 hover:bg-[#143d50]/[0.045]`} aria-label="Pause session">Pause</button>
-            <button type="button" onClick={togglePause} disabled={!isSessionLive || !isPaused} className={`${controlClass} border-[#143d50]/15 bg-white text-[#143d50] hover:border-[#143d50]/35 hover:bg-[#143d50]/[0.045]`} aria-label="Resume session">Resume</button>
-          </>
-        )}
+        <button type="button" onClick={togglePause} disabled={!isSessionLive || isPaused} className={`${controlClass} border-[#143d50]/15 bg-white text-[#143d50] hover:border-[#143d50]/35 hover:bg-[#143d50]/[0.045]`} aria-label="Pause session">Pause</button>
+        <button type="button" onClick={togglePause} disabled={!isSessionLive || !isPaused} className={`${controlClass} border-[#143d50]/15 bg-white text-[#143d50] hover:border-[#143d50]/35 hover:bg-[#143d50]/[0.045]`} aria-label="Resume session">Resume</button>
         <button type="button" onClick={stopModel} disabled={!isSessionLive && !isConnecting} className={`${controlClass} border-[#cf6d88]/45 bg-[#cf6d88]/10 text-[#a83e62] hover:border-[#cf6d88] hover:bg-[#cf6d88] hover:text-white`} aria-label="Disconnect session">Disconnect</button>
       </div>
     </div>
   );
+}
+
+function formatPromptHistoryTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Saved prompt";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function formatPromptHistoryIso(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 function WorldControls({ model, isLive, rotationSpeed, setRotationSpeed, sendWorldControl }) {
